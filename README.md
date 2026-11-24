@@ -1,4 +1,4 @@
-# Tools Media AV
+# MediaAV
 
 Ứng dụng desktop Windows để tải nội dung media mà bạn có quyền lưu trữ.
 
@@ -7,10 +7,10 @@
 Mở:
 
 ```text
-dist\media-msi.exe
+dist\mediaAV-msi\mediaAV-msi.exe
 ```
 
-## Tạo bản ZIP cho client
+## Bản Windows cho client
 
 Máy build cần có Python Windows và ba file trong `tools`:
 
@@ -26,17 +26,29 @@ Chạy PowerShell:
 powershell -ExecutionPolicy Bypass -File .\build-full-windows.ps1
 ```
 
-Kết quả:
+Kết quả build:
 
 ```text
-dist\media-msi.exe
-release\media-msi.exe
-release\Tools-Media-AV-Windows.zip
+dist\mediaAV-msi\mediaAV-msi.exe
+release\Media-AV-Windows.zip
+release\Media-AV-Windows.exe
 ```
 
-Client chỉ cần giải nén ZIP và chạy `media-msi.exe`. Không cần Python, WSL2, yt-dlp hoặc FFmpeg.
+### Cách dùng khuyến nghị
 
-Nếu máy build có Inno Setup, script cũng tạo `release\Tools-Media-AV-Setup.exe`.
+Client chỉ cần tải một file duy nhất là `Media-AV-Windows.exe` rồi chạy bằng quyền Administrator. Trình cài đặt sẽ tự quản lý toàn bộ file ứng dụng trong thư mục riêng:
+
+```text
+%ProgramFiles%\MediaAV\mediaAV-msi.exe
+```
+
+Sau đó tạo shortcut trong Start Menu và trên Desktop. Client chỉ cần mở shortcut `MediaAV`; không cần Python, WSL2, yt-dlp hoặc FFmpeg. Bản cài đặt dùng kiểu thư mục để mở nhanh hơn, không phải giải nén toàn bộ ứng dụng mỗi lần khởi động.
+
+Thư mục `C:\Program Files\MediaAV` tương tự thư mục riêng của IDM. Client không cần tự mở, di chuyển hoặc xóa các file bên trong. Khi gỡ cài đặt từ Windows, toàn bộ thư mục ứng dụng sẽ được dọn.
+
+### Bản portable
+
+Nếu không muốn cài đặt, client tải `Media-AV-Windows.zip`. Sau khi giải nén, copy thư mục `MediaAV` vào `C:\Program Files\MediaAV`, rồi chạy `mediaAV-msi.exe` trong thư mục đó.
 
 Hướng dẫn cài nhanh cho client nằm trong `client-install.txt` và được đóng gói cùng ZIP.
 
@@ -49,7 +61,7 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-GitHub Actions sẽ tự build trên Windows, đóng gói `Tools-Media-AV-Windows.zip` và tạo Release để client tải.
+GitHub Actions sẽ tự build trên Windows, đóng gói cả installer `Media-AV-Windows.exe` và ZIP portable. Khi tag đã tồn tại, workflow cập nhật lại các asset của chính release đó.
 
 ## Cấu trúc Git
 
@@ -57,7 +69,7 @@ GitHub Actions sẽ tự build trên Windows, đóng gói `Tools-Media-AV-Window
 media-downloader-project/
 ├── desktop_app.py
 ├── build-full-windows.ps1
-├── Tools-Media-AV.iss
+├── Media-AV.iss
 ├── client-install.txt
 ├── LICENSE
 ├── README.md

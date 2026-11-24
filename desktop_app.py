@@ -84,7 +84,7 @@ def parse_json_formats(text):
 class MediaDownloader(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Tools Media AV")
+        self.title("MediaAV")
         self.geometry("1050x720")
         self.minsize(850, 600)
         self.jobs = queue.Queue()
@@ -105,7 +105,7 @@ class MediaDownloader(tk.Tk):
     def _build_ui(self):
         pad = {"padx": 10, "pady": 5}
         top = ttk.Frame(self); top.pack(fill="x", padx=12, pady=10)
-        ttk.Label(top, text="Tools Media AV", font=("Segoe UI", 18, "bold")).pack(anchor="w")
+        ttk.Label(top, text="MediaAV", font=("Segoe UI", 18, "bold")).pack(anchor="w")
         ttk.Label(top, text="Ứng dụng tải media trên Windows. Chỉ tải nội dung bạn có quyền lưu trữ.").pack(anchor="w")
 
         form = ttk.LabelFrame(self, text="Nguồn media")
@@ -527,6 +527,25 @@ class MediaDownloader(tk.Tk):
                 if job_id in self.downloads:
                     self.downloads[job_id]["process"] = None
 
+    @staticmethod
+    def _terminate_process(process):
+        try:
+            if os.name == "nt":
+                # Chạy ngoài luồng UI để nút Cancel phản hồi ngay cả khi
+                # yt-dlp/ffmpeg đang bận hoặc còn nhiều fragment mở.
+                subprocess.run(
+                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                    timeout=10,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+            else:
+                os.killpg(process.pid, 15)
+        except Exception:
+            pass
+
     def stop_download(self):
         selected = self.tasks.selection()
         if not selected:
@@ -543,20 +562,7 @@ class MediaDownloader(tk.Tk):
             return
         self.status.config(text="Đang cancel...")
         self.stop_btn.config(state="disabled")
-        try:
-            if os.name == "nt":
-                # yt-dlp có thể đã tạo ffmpeg con; /T đảm bảo dừng cả cây tiến trình.
-                subprocess.run(
-                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    check=False,
-                    timeout=10,
-                )
-            else:
-                os.killpg(process.pid, 15)
-        except Exception as exc:
-            self.jobs.put(("log", f"Khong the dung tien trinh: {exc}"))
+        threading.Thread(target=self._terminate_process, args=(process,), daemon=True).start()
 
     def _refresh_stop_button(self):
         selected = self.tasks.selection()
@@ -578,9 +584,13 @@ class MediaDownloader(tk.Tk):
         self.after(5000, self._network_check)
 
     def _drain_queue(self):
+        processed = 0
         try:
-            while True:
+            # Giới hạn số dòng xử lý mỗi nhịp để cửa sổ vẫn mượt khi có
+            # nhiều download cùng lúc và yt-dlp ghi log liên tục.
+            while processed < 250:
                 item = self.jobs.get_nowait()
+                processed += 1
                 if item[0] == "formats":
                     _, url, formats, raw = item; self.url.delete(0, "end"); self.url.insert(0, url); self.formats = formats
                     for x in self.table.get_children(): self.table.delete(x)
@@ -591,9 +601,10 @@ class MediaDownloader(tk.Tk):
                     _, job_id, line = item
                     with self.download_lock:
                         if job_id in self.downloads:
-                            self.downloads[job_id].setdefault("logs", []).append(line)
-                    if self.tasks.selection() == (job_id,) and self.log_window and self.log_window.winfo_exists():
-                        self._render_log_window()
+                            logs = self.downloads[job_id].setdefault("logs", [])
+                            logs.append(line)
+                            if len(logs) > 3000:
+                                del logs[:-3000]
                     progress = re.search(r"(?:^|\s)(\d+(?:\.\d+)?)%", line)
                     if progress and self.tasks.exists(job_id):
                         values = list(self.tasks.item(job_id, "values")); values[2] = f"{progress.group(1)}%"; self.tasks.item(job_id, values=values)
@@ -624,6 +635,8 @@ class MediaDownloader(tk.Tk):
                         self._render_log_window()
                 elif item[0] == "error": self.status.config(text="Lỗi"); self.start_btn.config(state="normal"); messagebox.showerror("Lỗi", item[1])
         except queue.Empty: pass
+        if self.tasks.selection() and self.log_window and self.log_window.winfo_exists():
+            self._render_log_window()
         self._refresh_task_list_window()
         self.after(150, self._drain_queue)
 

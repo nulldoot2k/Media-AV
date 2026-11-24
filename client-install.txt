@@ -1,10 +1,28 @@
-TOOLS MEDIA AV WINDOWS
+MEDIAAV WINDOWS
 
-1. Giải nén file Tools-Media-AV-Windows.zip.
-2. Chạy media-msi.exe.
-3. Nhập Media URL và Referer, chọn Scan nếu muốn xem Size và độ phân giải.
-4. Chọn format hoặc để trống để dùng chất lượng tốt nhất.
-5. Chọn thư mục lưu, đặt tên file rồi bấm Bắt đầu tải.
+CÁCH CÀI ĐẶT KHUYẾN NGHỊ
+
+1. Chỉ cần tải và chạy Media-AV-Windows.exe bằng quyền Administrator.
+2. Bấm Install/Next theo hướng dẫn của Windows.
+3. Mở MediaAV từ shortcut trên Desktop hoặc Start Menu.
+
+Trình cài đặt tạo file chạy chính mediaAV-msi.exe tại:
+%ProgramFiles%\MediaAV\mediaAV-msi.exe
+
+Các file phụ thuộc được quản lý trong cùng thư mục cài đặt. Không cần tự cài Python, WSL2, yt-dlp hoặc FFmpeg.
+
+CÁCH PORTABLE
+
+1. Giải nén Media-AV-Windows.zip.
+2. Copy thư mục MediaAV vào C:\Program Files\MediaAV.
+3. Chạy C:\Program Files\MediaAV\mediaAV-msi.exe.
+
+SỬ DỤNG
+
+1. Nhập Media URL và Referer.
+2. Bấm Scan nếu muốn xem Size và độ phân giải.
+3. Chọn format hoặc để trống để dùng chất lượng tốt nhất.
+4. Chọn thư mục lưu, đặt tên file rồi bấm Bắt đầu tải.
 
 Không cần cài Python, WSL2, yt-dlp hoặc FFmpeg.
 

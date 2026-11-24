@@ -21,6 +21,10 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress --yes
+
       - name: Download yt-dlp and FFmpeg
         shell: pwsh
         run: |
@@ -51,15 +55,18 @@ jobs:
           $tag = "${{ github.ref_name }}"
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
+            foreach ($oldAsset in @("media-msi.exe", "Tools-Media-AV-Setup.exe", "Tools-Media-AV-Windows.exe", "Tools-Media-AV-Windows.zip")) {
+              gh release delete-asset $tag $oldAsset --yes 2>$null
+            }
             gh release upload $tag `
-              "release\Tools-Media-AV-Windows.zip" `
-              "release\media-msi.exe" `
+              "release\Media-AV-Windows.zip" `
+              "release\Media-AV-Windows.exe" `
               --clobber
-            gh release edit $tag --title "Tools Media AV $tag"
+            gh release edit $tag --title "MediaAV $tag"
           } else {
             gh release create $tag `
-              "release\Tools-Media-AV-Windows.zip" `
-              "release\media-msi.exe" `
-              --title "Tools Media AV $tag" `
+              "release\Media-AV-Windows.zip" `
+              "release\Media-AV-Windows.exe" `
+              --title "MediaAV $tag" `
               --generate-notes
           }

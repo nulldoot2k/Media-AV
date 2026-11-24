@@ -2,9 +2,12 @@ $ErrorActionPreference = 'Stop'
 $projectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $toolsDir = Join-Path $projectDir 'tools'
 $distDir = Join-Path $projectDir 'dist'
-$appName = 'media-msi'
-$distExe = Join-Path $distDir ($appName + '.exe')
+$appName = 'mediaAV-msi'
+$distAppDir = Join-Path $distDir $appName
+$distExe = Join-Path $distAppDir ($appName + '.exe')
 $releaseDir = Join-Path $projectDir 'release'
+$releaseAppDir = Join-Path $releaseDir $appName
+$portableDir = Join-Path $releaseDir 'Media-AV-Windows'
 $installGuide = Join-Path $projectDir 'client-install.txt'
 Set-Location $projectDir
 $python = Join-Path $env:ProgramFiles 'Python313\python.exe'
@@ -28,19 +31,49 @@ $ff = Find-Tool 'ffmpeg.exe'
 $fp = Find-Tool 'ffprobe.exe'
 
 & $python -m pip install --upgrade pyinstaller
-if (Test-Path (Join-Path $distDir 'MediaDownloader')) { Remove-Item -LiteralPath (Join-Path $distDir 'MediaDownloader') -Recurse -Force }
-if (Test-Path (Join-Path $distDir 'MediaDownloader.exe')) { Remove-Item -LiteralPath (Join-Path $distDir 'MediaDownloader.exe') -Force }
-if (Test-Path $distExe) { Remove-Item -LiteralPath $distExe -Force }
-& $python -m PyInstaller --noconfirm --clean --onefile --noconsole --name $appName --add-binary "$yt;." --add-binary "$ff;." --add-binary "$fp;." desktop_app.py
+foreach ($legacyOutput in @('MediaDownloader', 'MediaDownloader.exe', 'media-msi.exe')) {
+  $legacyPath = Join-Path $distDir $legacyOutput
+  if (Test-Path $legacyPath) {
+    Remove-Item -LiteralPath $legacyPath -Recurse -Force
+  }
+}
+if (Test-Path $distAppDir) { Remove-Item -LiteralPath $distAppDir -Recurse -Force }
+foreach ($legacyRelease in @('media-msi.exe', 'mediaAV-msi.exe', 'Tools-Media-AV-Setup.exe')) {
+  $legacyPath = Join-Path $releaseDir $legacyRelease
+  if (Test-Path $legacyPath) {
+    Remove-Item -LiteralPath $legacyPath -Force
+  }
+}
+if (Test-Path $releaseAppDir) { Remove-Item -LiteralPath $releaseAppDir -Recurse -Force }
+foreach ($legacyPackage in @('Tools-Media-AV-Windows.zip', 'Tools-Media-AV-Windows.exe', 'Media-AV-Windows.zip', 'Media-AV-Windows.exe')) {
+  $legacyPath = Join-Path $releaseDir $legacyPackage
+  if (Test-Path $legacyPath) { Remove-Item -LiteralPath $legacyPath -Force }
+}
+& $python -m PyInstaller --noconfirm --clean --onedir --noconsole --name $appName --add-binary "$yt;." --add-binary "$ff;." --add-binary "$fp;." desktop_app.py
 
 $iscc = Get-Command 'ISCC.exe' -ErrorAction SilentlyContinue
-Copy-Item $distExe (Join-Path $releaseDir ($appName + '.exe')) -Force
-Compress-Archive -Path $distExe, $installGuide -DestinationPath (Join-Path $releaseDir 'Tools-Media-AV-Windows.zip') -Force
+if (-not $iscc) {
+  foreach ($innoPath in @(
+    (Join-Path ${env:ProgramFiles} 'Inno Setup 7\ISCC.exe'),
+    (Join-Path ${env:ProgramFiles} 'Inno Setup 6\ISCC.exe'),
+    (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 7\ISCC.exe'),
+    (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe')
+  )) {
+    if (Test-Path $innoPath) { $iscc = [pscustomobject]@{ Source = $innoPath }; break }
+  }
+}
+Copy-Item $distAppDir $releaseAppDir -Recurse -Force
+if (Test-Path $portableDir) { Remove-Item -LiteralPath $portableDir -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+Copy-Item $distAppDir (Join-Path $portableDir 'MediaAV') -Recurse -Force
+Copy-Item $installGuide $portableDir -Force
+Compress-Archive -Path $portableDir -DestinationPath (Join-Path $releaseDir 'Media-AV-Windows.zip') -Force
 if ($iscc) {
-  & $iscc.Source (Join-Path $projectDir 'Tools-Media-AV.iss')
+  & $iscc.Source (Join-Path $projectDir 'Media-AV.iss')
+  if ($LASTEXITCODE -ne 0) { throw "Inno Setup compiler failed with exit code $LASTEXITCODE" }
   Write-Host 'Da tao bo cai trong release.' -ForegroundColor Green
 } else {
-  Write-Host 'Chua co Inno Setup; da tao Tools-Media-AV-Windows.zip trong release.' -ForegroundColor Yellow
+  Write-Host 'Chua co Inno Setup; da tao Media-AV-Windows.zip trong release.' -ForegroundColor Yellow
 }
 
 # Don output trung gian sau khi da tao xong EXE va ZIP.
