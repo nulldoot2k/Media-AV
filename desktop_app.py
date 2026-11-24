@@ -8,12 +8,18 @@ import sys
 import threading
 import time
 import tkinter as tk
+import urllib.request
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 APP_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))
-HISTORY = APP_DIR / "history.json"
+if os.name == "nt":
+    DATA_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "MediaAV"
+else:
+    DATA_DIR = Path.home() / ".mediaav"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+HISTORY = DATA_DIR / "history.json"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36"
 YT = str(BUNDLE_DIR / "yt-dlp.exe") if (BUNDLE_DIR / "yt-dlp.exe").exists() else shutil.which("yt-dlp") or "yt-dlp"
 FFMPEG = BUNDLE_DIR / "ffmpeg.exe"
@@ -97,16 +103,104 @@ class MediaDownloader(tk.Tk):
         self.task_list = None
         self.formats = []
         self._build_ui()
+        self._load_history()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.bind_all("<Button-1>", self._clear_task_selection_on_click, add="+")
         self.after(150, self._drain_queue)
         self.after(5000, self._network_check)
 
+    def _save_history(self):
+        with self.download_lock:
+            records = []
+            for job_id, job in self.downloads.items():
+                records.append({
+                    "id": job_id,
+                    "output": str(job.get("output", "")),
+                    "args": list(job.get("args", [])),
+                    "logs": list(job.get("logs", []))[-3000:],
+                    "status": job.get("status", "Đã cancel"),
+                    "progress": job.get("progress", "0%"),
+                    "name": job.get("name", "video"),
+                    "folder": job.get("folder", ""),
+                    "url": job.get("url", ""),
+                    "referer": job.get("referer", ""),
+                    "source_type": job.get("source_type", ""),
+                    "format_id": job.get("format_id", "best"),
+                    "connections": job.get("connections", "4"),
+                })
+        temporary = HISTORY.with_suffix(".tmp")
+        try:
+            temporary.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+            temporary.replace(HISTORY)
+        except OSError:
+            pass
+
+    def _load_history(self):
+        try:
+            records = json.loads(HISTORY.read_text(encoding="utf-8")) if HISTORY.exists() else []
+        except (OSError, ValueError, json.JSONDecodeError):
+            records = []
+        if not isinstance(records, list):
+            return
+        for record in records:
+            if not isinstance(record, dict) or not record.get("args"):
+                continue
+            job_id = str(record.get("id") or self.next_job_id)
+            try:
+                self.next_job_id = max(self.next_job_id, int(job_id) + 1)
+            except ValueError:
+                pass
+            output = Path(record.get("output") or "video.mp4")
+            name = str(record.get("name") or output.stem)
+            status = str(record.get("status") or "Đã cancel")
+            if status == "Đang tải":
+                status = "Chưa hoàn tất"
+            job = {
+                "process": None, "stop_requested": False, "output": output,
+                "folder": record.get("folder", str(output.parent)), "name": name,
+                "logs": list(record.get("logs") or [])[-3000:], "args": list(record.get("args") or []),
+                "status": status, "progress": str(record.get("progress") or "0%"),
+                "url": record.get("url", ""), "referer": record.get("referer", ""),
+                "source_type": record.get("source_type", ""), "format_id": record.get("format_id", "best"),
+                "connections": record.get("connections", "4"),
+            }
+            self.downloads[job_id] = job
+            self.tasks.insert("", "end", iid=job_id, values=(name, status, job["progress"], job["folder"]))
+
+    def _set_job_state(self, job_id, status=None, progress=None):
+        changed = False
+        with self.download_lock:
+            job = self.downloads.get(job_id)
+            if not job:
+                return
+            if status is not None:
+                changed = changed or job.get("status") != status
+                job["status"] = status
+            if progress is not None:
+                changed = changed or job.get("progress") != progress
+                job["progress"] = progress
+        if changed:
+            self._save_history()
+
+    def _has_completed_output(self, job_id):
+        with self.download_lock:
+            job = self.downloads.get(job_id)
+            if not job:
+                return False
+            output = Path(job.get("output", ""))
+            folder = Path(job.get("folder") or output.parent)
+            name = job.get("name") or output.stem
+        if output.is_file() and output.stat().st_size > 0:
+            return True
+        for candidate in folder.glob(name + ".*"):
+            if candidate.is_file() and candidate.stat().st_size > 0 and not candidate.name.endswith((".part", ".ytdl")) and ".part-Frag" not in candidate.name:
+                return True
+        return False
+
     def _build_ui(self):
         pad = {"padx": 10, "pady": 5}
         top = ttk.Frame(self); top.pack(fill="x", padx=12, pady=10)
         ttk.Label(top, text="MediaAV", font=("Segoe UI", 18, "bold")).pack(anchor="w")
-        ttk.Label(top, text="Ứng dụng tải media trên Windows. Chỉ tải nội dung bạn có quyền lưu trữ.").pack(anchor="w")
 
         form = ttk.LabelFrame(self, text="Nguồn media")
         form.pack(fill="x", padx=12, pady=5)
@@ -158,12 +252,13 @@ class MediaDownloader(tk.Tk):
         self.remove_btn = ttk.Button(buttons, text="Hủy bỏ", command=self.remove_task, state="disabled"); self.remove_btn.pack(side="left")
         self.resume_btn = ttk.Button(buttons, text="Tiếp tục", command=self.resume_task, state="disabled"); self.resume_btn.pack(side="left", padx=8)
         self.start_all_btn = ttk.Button(buttons, text="Bắt đầu tất cả", command=self.start_all); self.start_all_btn.pack(side="left", padx=8)
+        self.resume_all_btn = ttk.Button(buttons, text="Tiếp tục tất cả", command=self.resume_all); self.resume_all_btn.pack(side="left", padx=8)
         self.remove_all_btn = ttk.Button(buttons, text="Hủy bỏ tất cả", command=self.remove_all); self.remove_all_btn.pack(side="left")
         self.task_list_btn = ttk.Button(buttons, text="Danh sách tác vụ", command=self.show_task_list); self.task_list_btn.pack(side="left", padx=8)
         self.status = ttk.Label(buttons, text="Sẵn sàng"); self.status.pack(side="right")
 
     def _base(self):
-        args = [YT, "--force-ipv4", "--user-agent", UA, "--add-header", "Accept: */*"]
+        args = [YT, "--force-ipv4", "--no-playlist", "--newline", "--user-agent", UA, "--add-header", "Accept: */*"]
         if self.referer.get().strip(): args += ["--referer", self.referer.get().strip()]
         return args
 
@@ -359,6 +454,7 @@ class MediaDownloader(tk.Tk):
         self.log_text = None
         self._on_task_selected()
         self._refresh_task_list_window()
+        self._save_history()
         self.status.config(text="Đã hủy bỏ tác vụ")
 
     @staticmethod
@@ -395,6 +491,31 @@ class MediaDownloader(tk.Tk):
         if not self._resume_job(selected[0]):
             self.status.config(text="Tác vụ này không thể tiếp tục")
 
+    def _download_args(self, url, referer, source_type, fmt, out, name, connections):
+        """Tạo lại command từ metadata, tránh phụ thuộc đường dẫn args cũ."""
+        args = [YT, "--force-ipv4", "--no-playlist", "--newline", "--user-agent", UA, "--add-header", "Accept: */*"]
+        if referer:
+            args += ["--referer", referer]
+        lower_url = url.lower().split("?", 1)[0]
+        if lower_url.endswith((".mpd", ".m4s")):
+            source_type = "DASH / mpd"
+        elif lower_url.endswith((".mp4", ".webm", ".mkv", ".mov", ".avi")):
+            source_type = "MP4 / WebM trực tiếp"
+        elif lower_url.endswith((".m3u8", ".m3u")):
+            source_type = "HLS / m3u8 / manifest"
+        args += ["--continue", "--retries", "infinite", "--fragment-retries", "infinite", "--file-access-retries", "20", "--socket-timeout", "30", "--retry-sleep", "fragment:exp=1:20", "--merge-output-format", "mp4"]
+        if source_type.startswith("HLS"):
+            if fmt != "best": args += ["--format", fmt]
+            args += ["--hls-prefer-native", "--concurrent-fragments", str(connections or "4")]
+        elif source_type.startswith("DASH"):
+            args += ["--format", fmt if fmt != "best" else "bestvideo+bestaudio/best"]
+        else:
+            args += ["--format", "best", "--http-chunk-size", "10M"]
+        if FFMPEG.exists():
+            args += ["--ffmpeg-location", str(BUNDLE_DIR)]
+        args += ["--output", str(Path(out) / (name + ".%(ext)s")), url]
+        return args
+
     def _resume_job(self, job_id):
         with self.download_lock:
             job = self.downloads.get(job_id)
@@ -403,7 +524,12 @@ class MediaDownloader(tk.Tk):
             if job.get("process") and job["process"].poll() is None:
                 return False
             job["stop_requested"] = False
-            args = list(job["args"])
+            args = self._download_args(
+                job.get("url", ""), job.get("referer", ""), job.get("source_type", ""),
+                job.get("format_id", "best"), job.get("folder", Path(job["output"]).parent),
+                job.get("name", Path(job["output"]).stem), job.get("connections", "4"),
+            ) if job.get("url") else list(job["args"])
+            job["args"] = list(args)
         values = list(self.tasks.item(job_id, "values"))
         values[1] = "Đang khởi động"
         self.tasks.item(job_id, values=values)
@@ -413,12 +539,32 @@ class MediaDownloader(tk.Tk):
         return True
 
     def start_all(self):
+        if not self.tasks.get_children():
+            self.status.config(text="Không có tác vụ nào để bắt đầu")
+            return
         resumed = 0
         for job_id in self.tasks.get_children():
             values = self.tasks.item(job_id, "values")
-            if values and values[1] in ("Đã cancel", "Lỗi") and self._resume_job(job_id):
+            if values and values[1] in ("Đã cancel", "Lỗi", "Chưa hoàn tất") and self._resume_job(job_id):
                 resumed += 1
-        self.status.config(text=f"Đã bắt đầu lại {resumed} tác vụ")
+        if resumed:
+            self.status.config(text=f"Đã bắt đầu lại {resumed} tác vụ")
+        else:
+            self.status.config(text="Không có tác vụ nào để bắt đầu")
+
+    def resume_all(self):
+        if not self.tasks.get_children():
+            self.status.config(text="Không có tác vụ nào để tiếp tục")
+            return
+        resumed = 0
+        for job_id in self.tasks.get_children():
+            values = self.tasks.item(job_id, "values")
+            if values and values[1] in ("Đã cancel", "Lỗi", "Chưa hoàn tất") and self._resume_job(job_id):
+                resumed += 1
+        if resumed:
+            self.status.config(text=f"Đã tiếp tục {resumed} tác vụ")
+        else:
+            self.status.config(text="Không có tác vụ nào để tiếp tục")
 
     def remove_all(self):
         job_items = list(self.tasks.get_children())
@@ -445,6 +591,7 @@ class MediaDownloader(tk.Tk):
         self.log_window = None
         self.log_text = None
         self._on_task_selected()
+        self._save_history()
         self.status.config(text=f"Đã hủy bỏ {len(jobs)} tác vụ")
 
     def _on_close(self):
@@ -452,6 +599,9 @@ class MediaDownloader(tk.Tk):
             running = [job["process"] for job in self.downloads.values() if job.get("process") and job["process"].poll() is None]
             for job in self.downloads.values():
                 job["stop_requested"] = True
+                if job.get("status") not in ("Hoàn tất", "Lỗi"):
+                    job["status"] = "Đã cancel"
+        self._save_history()
         for process in running:
             if os.name == "nt":
                 subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
@@ -477,20 +627,29 @@ class MediaDownloader(tk.Tk):
         output_path = (out / (name + ".mp4")).resolve()
         with self.download_lock:
             duplicate_task = any(Path(job.get("output")).resolve() == output_path for job in self.downloads.values() if job.get("output"))
-        if output_path.exists() or duplicate_task:
+        existing_media = list(out.glob(name + ".*"))
+        if output_path.exists() or existing_media or duplicate_task:
             return messagebox.showwarning("Tên file bị trùng", f"File '{name}.mp4' đã tồn tại hoặc đang được tải. Hãy nhập tên khác.")
-        args = self._base() + ["--continue", "--retries", "infinite", "--fragment-retries", "infinite", "--retry-sleep", "fragment:exp=1:20", "--abort-on-unavailable-fragments", "--merge-output-format", "mp4"]
-        if self.media_type.get().startswith("HLS"):
-            if fmt != "best": args += ["--format", fmt]
-            args += ["--hls-prefer-native", "--concurrent-fragments", self.connections.get()]
-        elif self.media_type.get().startswith("DASH"): args += ["--format", fmt if fmt != "best" else "bestvideo+bestaudio/best"]
-        else: args += ["--format", "best"]
-        if FFMPEG.exists(): args += ["--ffmpeg-location", str(BUNDLE_DIR)]
-        args += ["--output", str(out / (name + ".%(ext)s")), url]
+        source_type = self.media_type.get()
+        lower_url = url.lower().split("?", 1)[0]
+        if lower_url.endswith((".mpd", ".m4s")):
+            source_type = "DASH / mpd"
+        elif lower_url.endswith((".mp4", ".webm", ".mkv", ".mov", ".avi")):
+            source_type = "MP4 / WebM trực tiếp"
+        elif lower_url.endswith((".m3u8", ".m3u")):
+            source_type = "HLS / m3u8 / manifest"
+        connections = self.connections.get() or "4"
+        args = self._download_args(url, self.referer.get().strip(), source_type, fmt, out, name, connections)
         with self.download_lock:
             job_id = str(self.next_job_id)
             self.next_job_id += 1
-            self.downloads[job_id] = {"process": None, "stop_requested": False, "output": out / (name + ".mp4"), "logs": [], "args": list(args)}
+            self.downloads[job_id] = {
+                "process": None, "stop_requested": False, "output": out / (name + ".mp4"),
+                "folder": str(out), "name": name, "logs": [], "args": list(args),
+                "status": "Đang khởi động", "progress": "0%", "url": url,
+                "referer": self.referer.get().strip(), "source_type": source_type,
+                "format_id": fmt, "connections": connections,
+            }
         for task_id in self.tasks.selection():
             self.tasks.selection_remove(task_id)
         self.tasks.insert("", "end", iid=job_id, values=(name, "Đang khởi động", "0%", str(out)))
@@ -498,6 +657,7 @@ class MediaDownloader(tk.Tk):
         self._refresh_task_list_window()
         self.status.config(text=f"Đang tải: {name}")
         self._clear_input_area()
+        self._save_history()
         threading.Thread(target=self._download_worker, args=(job_id, args), daemon=True).start()
 
     def _download_worker(self, job_id, args):
@@ -574,14 +734,25 @@ class MediaDownloader(tk.Tk):
                 job = self.downloads.get(selected[0])
                 enabled = bool(job and job.get("process") and job["process"].poll() is None and not job.get("stop_requested"))
             values = self.tasks.item(selected[0], "values")
-            resumable = bool(values and values[1] in ("Đã cancel", "Lỗi")) and not enabled
+            resumable = bool(values and values[1] in ("Đã cancel", "Lỗi", "Chưa hoàn tất")) and not enabled
         self.stop_btn.config(state="normal" if enabled else "disabled")
         self.remove_btn.config(state="normal" if removable else "disabled")
         self.resume_btn.config(state="normal" if resumable else "disabled")
 
     def _network_check(self):
-        self.network.config(text="Mạng: online · thông tin chi tiết trong log tải")
+        threading.Thread(target=self._network_worker, daemon=True).start()
         self.after(5000, self._network_check)
+
+    def _network_worker(self):
+        started = time.perf_counter()
+        try:
+            request = urllib.request.Request("https://www.google.com/generate_204", method="HEAD", headers={"User-Agent": UA})
+            with urllib.request.urlopen(request, timeout=4):
+                pass
+            rtt = round((time.perf_counter() - started) * 1000)
+            self.jobs.put(("network", f"Mạng: online · RTT {rtt} ms"))
+        except Exception:
+            self.jobs.put(("network", "Mạng: chưa kết nối"))
 
     def _drain_queue(self):
         processed = 0
@@ -597,6 +768,7 @@ class MediaDownloader(tk.Tk):
                     for f in formats: self.table.insert("", "end", values=(f["id"], f["ext"], f["resolution"], f["size"]))
                     self.status.config(text=f"Đã scan {len(formats)} lựa chọn"); self.start_btn.config(state="normal")
                 elif item[0] == "log": self.status.config(text=item[1])
+                elif item[0] == "network": self.network.config(text=item[1])
                 elif item[0] == "job_log":
                     _, job_id, line = item
                     with self.download_lock:
@@ -607,21 +779,36 @@ class MediaDownloader(tk.Tk):
                                 del logs[:-3000]
                     progress = re.search(r"(?:^|\s)(\d+(?:\.\d+)?)%", line)
                     if progress and self.tasks.exists(job_id):
-                        values = list(self.tasks.item(job_id, "values")); values[2] = f"{progress.group(1)}%"; self.tasks.item(job_id, values=values)
+                        percent = f"{progress.group(1)}%"
+                        values = list(self.tasks.item(job_id, "values")); values[2] = percent; self.tasks.item(job_id, values=values)
+                        self._set_job_state(job_id, progress=percent)
+                    speed = re.search(r"at\s+([^\s]+/s)", line)
+                    if speed and self.tasks.exists(job_id):
+                        values = list(self.tasks.item(job_id, "values"))
+                        eta = re.search(r"ETA\s+([^\s]+)", line)
+                        detail = f"Đang tải · {speed.group(1)}"
+                        if eta:
+                            detail += f" · còn {eta.group(1)}"
+                        values[1] = detail
+                        self.tasks.item(job_id, values=values)
                 elif item[0] == "job_status":
                     _, job_id, status = item
                     if self.tasks.exists(job_id):
                         values = list(self.tasks.item(job_id, "values")); values[1] = status; self.tasks.item(job_id, values=values)
+                    self._set_job_state(job_id, status=status)
                     self._refresh_stop_button()
                 elif item[0] == "job_done":
                     _, job_id, code = item
+                    completed = code == 0 and self._has_completed_output(job_id)
                     if self.tasks.exists(job_id):
-                        values = list(self.tasks.item(job_id, "values")); values[1] = "Hoàn tất" if code == 0 else "Tải lỗi"; values[2] = "100%" if code == 0 else values[2]; self.tasks.item(job_id, values=values)
+                        values = list(self.tasks.item(job_id, "values")); values[1] = "Hoàn tất" if completed else "Tải lỗi"; values[2] = "100%" if completed else values[2]; self.tasks.item(job_id, values=values)
+                    self._set_job_state(job_id, "Hoàn tất" if completed else "Tải lỗi", "100%" if completed else None)
                     self._refresh_stop_button()
                 elif item[0] == "job_stopped":
                     _, job_id, _code = item
                     if self.tasks.exists(job_id):
                         values = list(self.tasks.item(job_id, "values")); values[1] = "Đã cancel"; self.tasks.item(job_id, values=values)
+                    self._set_job_state(job_id, "Đã cancel")
                     self._refresh_stop_button()
                 elif item[0] == "job_error":
                     _, job_id, error = item
@@ -630,6 +817,7 @@ class MediaDownloader(tk.Tk):
                             self.downloads[job_id].setdefault("logs", []).append(f"Lỗi: {error}")
                     if self.tasks.exists(job_id):
                         values = list(self.tasks.item(job_id, "values")); values[1] = "Lỗi"; self.tasks.item(job_id, values=values)
+                    self._set_job_state(job_id, "Lỗi")
                     self._refresh_stop_button()
                     if self.tasks.selection() == (job_id,) and self.log_window and self.log_window.winfo_exists():
                         self._render_log_window()

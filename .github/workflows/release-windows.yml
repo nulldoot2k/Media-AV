@@ -16,32 +16,52 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Restore build tools cache
+        uses: actions/cache@v4
         with:
-          python-version: "3.13"
+          path: tools
+          key: mediaav-tools-${{ runner.os }}-yt-dlp-ffmpeg-v1
 
-      - name: Install Inno Setup
-        shell: pwsh
-        run: choco install innosetup --no-progress --yes
-
-      - name: Download yt-dlp and FFmpeg
+      - name: Use runner tools or prepare missing tools
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path tools | Out-Null
-          Invoke-WebRequest `
-            -Uri "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" `
-            -OutFile "tools\yt-dlp.exe"
+          function Copy-RunnerTool($name) {
+            $target = Join-Path 'tools' $name
+            if (Test-Path $target) { return $true }
+            $found = Get-Command $name -ErrorAction SilentlyContinue
+            if ($found) { Copy-Item $found.Source $target -Force; return $true }
+            return $false
+          }
 
-          $ffmpegZip = Join-Path $env:RUNNER_TEMP "ffmpeg.zip"
-          Invoke-WebRequest `
-            -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" `
-            -OutFile $ffmpegZip
-          $ffmpegExtract = Join-Path $env:RUNNER_TEMP "ffmpeg-extract"
-          Expand-Archive -Path $ffmpegZip -DestinationPath $ffmpegExtract -Force
-          $bin = Get-ChildItem $ffmpegExtract -Directory | Select-Object -First 1
-          Copy-Item (Join-Path $bin.FullName "bin\ffmpeg.exe") "tools\ffmpeg.exe"
-          Copy-Item (Join-Path $bin.FullName "bin\ffprobe.exe") "tools\ffprobe.exe"
+          $ytMissing = -not (Copy-RunnerTool 'yt-dlp.exe')
+          $ffMissing = -not (Copy-RunnerTool 'ffmpeg.exe')
+          $fpMissing = -not (Copy-RunnerTool 'ffprobe.exe')
+
+          if ($ytMissing) {
+            Invoke-WebRequest 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe' -OutFile 'tools\yt-dlp.exe'
+          }
+          if ($ffMissing -or $fpMissing) {
+            $ffmpegZip = Join-Path $env:RUNNER_TEMP 'ffmpeg.zip'
+            Invoke-WebRequest 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip' -OutFile $ffmpegZip
+            $ffmpegExtract = Join-Path $env:RUNNER_TEMP 'ffmpeg-extract'
+            Expand-Archive $ffmpegZip $ffmpegExtract -Force
+            $bin = Get-ChildItem $ffmpegExtract -Directory | Select-Object -First 1
+            if ($ffMissing) { Copy-Item (Join-Path $bin.FullName 'bin\ffmpeg.exe') 'tools\ffmpeg.exe' -Force }
+            if ($fpMissing) { Copy-Item (Join-Path $bin.FullName 'bin\ffprobe.exe') 'tools\ffprobe.exe' -Force }
+          }
+
+          $iscc = Get-Command 'ISCC.exe' -ErrorAction SilentlyContinue
+          if (-not $iscc) {
+            foreach ($candidate in @(
+              (Join-Path ${env:ProgramFiles} 'Inno Setup 7\ISCC.exe'),
+              (Join-Path ${env:ProgramFiles} 'Inno Setup 6\ISCC.exe'),
+              (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 7\ISCC.exe'),
+              (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe')
+            )) { if (Test-Path $candidate) { $iscc = $candidate; break } }
+          }
+          if (-not $iscc) { choco install innosetup --no-progress --yes }
 
       - name: Build Windows package
         shell: pwsh

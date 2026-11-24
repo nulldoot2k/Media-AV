@@ -30,8 +30,14 @@ $yt = Find-Tool 'yt-dlp.exe'
 $ff = Find-Tool 'ffmpeg.exe'
 $fp = Find-Tool 'ffprobe.exe'
 
-& $python -m pip install --upgrade pyinstaller
-foreach ($legacyOutput in @('MediaDownloader', 'MediaDownloader.exe', 'media-msi.exe')) {
+$hasPyInstaller = $true
+& $python -c "import PyInstaller" 2>$null
+if ($LASTEXITCODE -ne 0) { $hasPyInstaller = $false }
+if (-not $hasPyInstaller) {
+  Write-Host 'PyInstaller chua co; cai mot lan de build.' -ForegroundColor Yellow
+  & $python -m pip install pyinstaller
+}
+foreach ($legacyOutput in @('MediaDownloader', 'MediaDownloader.exe', 'media-msi.exe', 'mediaAV-msi.exe')) {
   $legacyPath = Join-Path $distDir $legacyOutput
   if (Test-Path $legacyPath) {
     Remove-Item -LiteralPath $legacyPath -Recurse -Force
