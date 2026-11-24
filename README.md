@@ -59,6 +59,7 @@ media-downloader-project/
 ├── build-full-windows.ps1
 ├── Tools-Media-AV.iss
 ├── client-install.txt
+├── LICENSE
 ├── README.md
 ├── tools/
 │   └── README.txt
@@ -77,3 +78,5 @@ media-downloader-project/
 - Chọn thư mục lưu bằng hộp thoại Windows.
 
 Chỉ sử dụng với nội dung bạn có quyền tải và lưu trữ.
+
+Mã nguồn được phát hành theo giấy phép MIT. Các thành phần bên thứ ba như yt-dlp và FFmpeg tuân theo giấy phép riêng của chúng.
