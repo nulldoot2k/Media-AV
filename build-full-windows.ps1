@@ -31,8 +31,12 @@ $ff = Find-Tool 'ffmpeg.exe'
 $fp = Find-Tool 'ffprobe.exe'
 
 $hasPyInstaller = $true
+$previousErrorAction = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 & $python -c "import PyInstaller" 2>$null
-if ($LASTEXITCODE -ne 0) { $hasPyInstaller = $false }
+$pyInstallerExitCode = $LASTEXITCODE
+$ErrorActionPreference = $previousErrorAction
+if ($pyInstallerExitCode -ne 0) { $hasPyInstaller = $false }
 if (-not $hasPyInstaller) {
   Write-Host 'PyInstaller chua co; cai mot lan de build.' -ForegroundColor Yellow
   & $python -m pip install pyinstaller
