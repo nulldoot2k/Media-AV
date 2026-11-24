@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+media_ui.pid
+media_ui.log
+media_ui.out.log
+media_ui.err.log
+history.json
+build/
+dist/
+release/
+*.spec
+tools/*.exe

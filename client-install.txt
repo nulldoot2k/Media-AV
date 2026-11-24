@@ -1,0 +1,11 @@
+TOOLS MEDIA AV WINDOWS
+
+1. Giải nén file Tools-Media-AV-Windows.zip.
+2. Chạy media-msi.exe.
+3. Nhập Media URL và Referer, chọn Scan nếu muốn xem Size và độ phân giải.
+4. Chọn format hoặc để trống để dùng chất lượng tốt nhất.
+5. Chọn thư mục lưu, đặt tên file rồi bấm Bắt đầu tải.
+
+Không cần cài Python, WSL2, yt-dlp hoặc FFmpeg.
+
+Chỉ sử dụng với nội dung bạn có quyền tải và lưu trữ.

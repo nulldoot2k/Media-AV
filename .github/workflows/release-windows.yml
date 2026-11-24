@@ -1,0 +1,55 @@
+name: Release Tools Media AV Windows
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Download yt-dlp and FFmpeg
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path tools | Out-Null
+          Invoke-WebRequest `
+            -Uri "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" `
+            -OutFile "tools\yt-dlp.exe"
+
+          $ffmpegZip = Join-Path $env:RUNNER_TEMP "ffmpeg.zip"
+          Invoke-WebRequest `
+            -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" `
+            -OutFile $ffmpegZip
+          $ffmpegExtract = Join-Path $env:RUNNER_TEMP "ffmpeg-extract"
+          Expand-Archive -Path $ffmpegZip -DestinationPath $ffmpegExtract -Force
+          $bin = Get-ChildItem $ffmpegExtract -Directory | Select-Object -First 1
+          Copy-Item (Join-Path $bin.FullName "bin\ffmpeg.exe") "tools\ffmpeg.exe"
+          Copy-Item (Join-Path $bin.FullName "bin\ffprobe.exe") "tools\ffprobe.exe"
+
+      - name: Build Windows package
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File .\build-full-windows.ps1
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" `
+            "release\Tools-Media-AV-Windows.zip" `
+            "release\media-msi.exe" `
+            --title "Tools Media AV ${{ github.ref_name }}" `
+            --generate-notes
